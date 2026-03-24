@@ -1,0 +1,4 @@
+{
+  "installDependencies": true,
+  "startCommand": "cd ei-outreach && npm run start"
+}
