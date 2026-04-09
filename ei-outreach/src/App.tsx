@@ -244,54 +244,24 @@ function evalRulesets(rulesets,enr,prospectStatus){
   for(const r of rulesets){let t=false;if(r.trigger==="reply"&&prospectStatus==="Reply Detected")t=true;if(r.trigger==="meeting"&&prospectStatus==="Meeting Booked")t=true;if(r.trigger==="finished"&&enr.status==="finished")t=true;if(r.trigger==="overdue"&&enr.pendingTask&&dayDiff(enr.pendingTask.dueAt?.split("T")[0])>=(r.triggerValue||3))t=true;if(t)return r;}return null;
 }
 
-// Legacy S/KEYS kept only for cfg and savedViews (settings, not shared)
-const S={
-  save:async(k:string,v:any)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){console.warn(e);}},
-  load:async(k:string)=>{try{const r=localStorage.getItem(k);return r?JSON.parse(r):null;}catch{return null;}}
+// -- SUPABASE PERSISTENCE HELPERS ---------------------------------------------
+const sbSaveRows=async(table:string,rows:any[])=>{
+  if(!rows.length)return;
+  await sbFetch(table+"?on_conflict=id",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates"},body:JSON.stringify(rows.map(r=>({id:r.id,data:r})))});
 };
-const KEYS={cfg:"ei_cfg_v16",sv:"ei_sv_v16"};
-
-// Prospect mappers
-const prospectToRow=(p:any)=>({id:p.id,name:p.name||"",contact:p.contact||"",title:p.title||"",phone:p.phone||"",email:p.email||"",city:p.city||"",state:p.state||"",prospect_status:p.prospectStatus||"Not Contacted",priority:p.priority||"Normal",tags:p.tags||[],notes:p.notes||"",call_log:p.callLog||[],created_at:p.createdAt||""});
-const prospectFromRow=(r:any)=>({id:r.id,name:r.name||"",contact:r.contact||"",title:r.title||"",phone:r.phone||"",email:r.email||"",city:r.city||"",state:r.state||"",prospectStatus:r.prospect_status||"Not Contacted",priority:r.priority||"Normal",tags:r.tags||[],notes:r.notes||"",callLog:r.call_log||[],createdAt:r.created_at||""});
-
-// Sequence mappers
-const seqToRow=(s:any)=>({id:s.id,name:s.name||"",color:s.color||"",reengage_delay:s.reengageDelay||30,active:s.active!==false,built_in:s.builtIn||false,created_at:s.createdAt||"",version:s.version||1,steps:s.steps||[],rulesets:s.rulesets||[]});
-const seqFromRow=(r:any)=>({id:r.id,name:r.name||"",color:r.color||"",reengageDelay:r.reengage_delay||30,active:r.active!==false,builtIn:r.built_in||false,createdAt:r.created_at||"",version:r.version||1,steps:r.steps||[],rulesets:r.rulesets||[]});
-
-// Enrollment mappers
-const enrToRow=(e:any)=>({id:e.id,prospect_id:e.prospectId,sequence_id:e.sequenceId,sequence_version:e.sequenceVersion||1,step_index:e.stepIndex||0,last_completed_at:e.lastCompletedAt||null,next_run_at:e.nextRunAt||null,scheduled_start_at:e.scheduledStartAt||null,status:e.status||"active",pending_task:e.pendingTask||null,exit_reason:e.exitReason||null,retry_count:e.retryCount||0,enrolled_at:e.enrolledAt||null,finished_at:e.finishedAt||null,source:e.source||"single",paused_at:e.pausedAt||null,last_touch_step_id:e.lastTouchStepId||null,last_touch_step_label:e.lastTouchStepLabel||null,last_touch_at:e.lastTouchAt||null,last_disposition:e.lastDisposition||null,last_disposition_at:e.lastDispositionAt||null,last_disposition_note:e.lastDispositionNote||null});
-const enrFromRow=(r:any)=>({id:r.id,prospectId:r.prospect_id,sequenceId:r.sequence_id,sequenceVersion:r.sequence_version||1,stepIndex:r.step_index||0,lastCompletedAt:r.last_completed_at||null,nextRunAt:r.next_run_at||null,scheduledStartAt:r.scheduled_start_at||null,status:r.status||"active",pendingTask:r.pending_task||null,exitReason:r.exit_reason||null,retryCount:r.retry_count||0,enrolledAt:r.enrolled_at||null,finishedAt:r.finished_at||null,source:r.source||"single",pausedAt:r.paused_at||null,lastTouchStepId:r.last_touch_step_id||null,lastTouchStepLabel:r.last_touch_step_label||null,lastTouchAt:r.last_touch_at||null,lastDisposition:r.last_disposition||null,lastDispositionAt:r.last_disposition_at||null,lastDispositionNote:r.last_disposition_note||null});
-
-// Activity mappers
-const actToRow=(a:any)=>({id:a.id,prospect_id:a.prospectId,ts:a.ts||null,user_name:a.userName||"",type:a.type||"",text:a.text||"",meta:a.meta||{}});
-const actFromRow=(r:any)=>({id:r.id,prospectId:r.prospect_id,ts:r.ts||null,userName:r.user_name||"",type:r.type||"",text:r.text||"",meta:r.meta||{}});
-
-// Supabase DB helpers
-const sbSaveProspects=async(prospects:any[])=>{
-  if(!prospects.length)return;
-  await sbFetch("prospects",{method:"DELETE",headers:{"Prefer":""}});
-  for(let i=0;i<prospects.length;i+=50){
-    const batch=prospects.slice(i,i+50);
-    await sbFetch("prospects",{method:"POST",body:JSON.stringify(batch.map(prospectToRow))});
-  }
+const sbLoadRows=async(table:string)=>{
+  const rows=await sbFetch(table+"?select=data&order=id");
+  return rows.map((r:any)=>r.data);
 };
-const sbSaveEnrollments=async(enrs:any[])=>{
-  await sbFetch("enrollments",{method:"DELETE",headers:{"Prefer":""}});
-  if(!enrs.length)return;
-  for(let i=0;i<enrs.length;i+=50){
-    const batch=enrs.slice(i,i+50);
-    await sbFetch("enrollments",{method:"POST",body:JSON.stringify(batch.map(enrToRow))});
-  }
+const sbSaveSetting=async(key:string,value:any)=>{
+  await sbFetch("app_settings?on_conflict=key",{method:"POST",headers:{"Prefer":"resolution=merge-duplicates"},body:JSON.stringify({key,data:value})});
 };
-const sbSaveSequences=async(seqs:any[])=>{
-  await sbFetch("sequences",{method:"DELETE",headers:{"Prefer":""}});
-  if(!seqs.length)return;
-  await sbFetch("sequences",{method:"POST",body:JSON.stringify(seqs.map(seqToRow))});
+const sbLoadSetting=async(key:string)=>{
+  try{const rows=await sbFetch("app_settings?key=eq."+key+"&select=data");return rows.length?rows[0].data:null;}catch{return null;}
 };
-const sbLogActivity=async(act:any)=>{
-  try{await sbFetch("activities",{method:"POST",body:JSON.stringify(actToRow(act))});}catch(e){console.warn("act log failed",e);}
-};
+// Stub - no longer used but kept for safety
+const S={save:async(k:string,v:any)=>{},load:async(k:string)=>null};
+const KEYS={p:"ei_v16",s:"ei_seqs_v16",e:"ei_enr_v16",a:"ei_act_v16",cfg:"ei_cfg_v16",sv:"ei_sv_v16"};
 const toCSV=(rows,cols)=>[cols.join(","),...rows.map(r=>cols.map(c=>'"'+String(r[c]??"").replace(/"/g,"'")+'"').join(","))].join("\n");
 const dlCSV=(c,n)=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([c],{type:"text/csv"}));a.download=n;a.click();};
 const enrStatusColor=s=>({active:"#4ade80",paused:"#fbbf24",failed:"#f87171",finished:"#2dd4bf",removed:"#64748b",pending:"#818cf8"}[s]||"#4b6280");
@@ -1213,87 +1183,83 @@ export default function App(){
   const [userName,setUserName]=useState("");
   const fileRef=useRef();const tickRef=useRef(false);const runTickRef=useRef(null);
 
+  // -- STARTUP: load everything from Supabase --------------------------------
   useEffect(()=>{
-    Promise.all([
-      sbFetch("prospects?order=created_at.asc"),
-      sbFetch("sequences?order=created_at.asc"),
-      sbFetch("enrollments?order=enrolled_at.asc"),
-      sbFetch("activities?order=ts.asc"),
-      sbFetch("crm_records?order=created_at.asc"),
-      S.load(KEYS.cfg),
-      S.load(KEYS.sv),
-    ]).then(([pd,sd,ed,ad,crmd,cfg,sv])=>{
-      // Prospects
-      if(pd&&Array.isArray(pd)&&pd.length>0){
-        setProspects(pd.map(prospectFromRow));
-      }
-      // Sequences
-      if(sd&&Array.isArray(sd)&&sd.length>0){
-        const loaded=sd.map(seqFromRow);
-        const fixed=loaded.map(seq=>{
-          const bi=BUILTIN.find(b=>b.name===seq.name);
-          if(!bi||!seq.builtIn)return seq;
-          const fresh=bsToSteps(bi.steps);
-          const needsUpdate=seq.steps.some((s:any,i:number)=>s.delayDays!==fresh[i]?.delayDays);
-          if(!needsUpdate)return seq;
-          return{...seq,steps:fresh};
-        });
-        setSequences(fixed);
-      } else {
-        const s=BUILTIN.map(seqToStore);
-        setSequences(s);
-        sbSaveSequences(s).catch(console.warn);
-      }
-      // Enrollments
-      if(ed&&Array.isArray(ed))setEnrollments(ed.map(enrFromRow));
-      // Activities - rebuild object keyed by prospectId
-      if(ad&&Array.isArray(ad)){
-        const actMap:any={};
-        ad.forEach((r:any)=>{
-          const a=actFromRow(r);
-          if(!actMap[a.prospectId])actMap[a.prospectId]=[];
-          actMap[a.prospectId].unshift(a);
-        });
-        setActivities(actMap);
-      }
-      // CRM
-      if(crmd&&Array.isArray(crmd))setCrmRecords(crmd.map(fromRow));
-      // Local-only settings
-      if(cfg)setSettings(cfg);
-      if(sv&&Array.isArray(sv))setSavedViews(sv);
+    (async()=>{
+      try{
+        const [pd,sd,ed,crmRows,cfg,sv,actRows]=await Promise.all([
+          sbLoadRows("prospects").catch(()=>[]),
+          sbLoadRows("sequences").catch(()=>[]),
+          sbLoadRows("enrollments").catch(()=>[]),
+          sbFetch("crm_records?order=created_at.asc").catch(()=>[]),
+          sbLoadSetting("settings"),
+          sbLoadSetting("saved_views"),
+          sbLoadRows("activities").catch(()=>[]),
+        ]);
+        if(pd&&pd.length>0)setProspects(pd);
+        if(sd&&sd.length>0){
+          const fixed=sd.map((seq:any)=>{
+            const bi=BUILTIN.find(b=>b.name===seq.name);
+            if(!bi||!seq.builtIn)return seq;
+            const fresh=bsToSteps(bi.steps);
+            const needsUpdate=seq.steps.some((s:any,i:number)=>s.delayDays!==fresh[i]?.delayDays);
+            if(!needsUpdate)return seq;
+            return{...seq,steps:fresh};
+          });
+          setSequences(fixed);
+          await sbSaveRows("sequences",fixed).catch(()=>{});
+        } else {
+          const builtins=BUILTIN.map(seqToStore);
+          setSequences(builtins);
+          await sbSaveRows("sequences",builtins).catch(()=>{});
+        }
+        if(ed&&ed.length>0)setEnrollments(ed);
+        if(actRows&&actRows.length>0){
+          const actMap:{[key:string]:any[]}={};
+          actRows.forEach((row:any)=>{if(row&&row.prospectId)actMap[row.prospectId]=row.entries||[];});
+          setActivities(actMap);
+        }
+        if(crmRows&&crmRows.length>0)setCrmRecords(crmRows.map(fromRow));
+        if(cfg)setSettings(cfg);
+        if(sv&&Array.isArray(sv))setSavedViews(sv);
+      }catch(e){console.error("Startup load error:",e);}
       setLoaded(true);
-    }).catch(e=>{console.error("Load failed",e);setLoaded(true);});
+    })();
   },[]);
 
-  const flash=(m:any,t="ok")=>{setToast({m,t});setTimeout(()=>setToast(null),3000);};
+  const flash=(m,t="ok")=>{setToast({m,t});setTimeout(()=>setToast(null),3000);};
+
   const upd=useCallback((id:string,patch:any)=>{
     setProspects(prev=>{
-      const next=prev.map((p:any)=>p.id===id?{...p,...patch}:p);
+      const next=prev.map(p=>p.id===id?{...p,...patch}:p);
       setSaving(true);
-      const updated=next.find((p:any)=>p.id===id);
-      if(updated)sbFetch("prospects?id=eq."+id,{method:"PATCH",body:JSON.stringify(prospectToRow(updated))}).finally(()=>setSaving(false));
+      sbSaveRows("prospects",[next.find(p=>p.id===id)].filter(Boolean)).finally(()=>setSaving(false));
       return next;
     });
   },[]);
+
   const setP=useCallback((fn:any)=>{
     setProspects(prev=>{
       const next=typeof fn==="function"?fn(prev):fn;
       setSaving(true);
-      sbSaveProspects(next).finally(()=>setSaving(false));
+      sbSaveRows("prospects",next).finally(()=>setSaving(false));
       return next;
     });
   },[]);
+
   const saveEnr=useCallback(async(arr:any[])=>{
     setEnrollments(arr);
-    await sbSaveEnrollments(arr);
+    await sbSaveRows("enrollments",arr).catch(e=>console.warn("saveEnr error:",e));
   },[]);
+
   const logAct=useCallback((pid:string,obj:any)=>{
     const entry={id:uid(),prospectId:pid,ts:nowISO(),userName,meta:{},...obj};
-    setActivities((prev:any)=>{
-      const next={...prev,[pid]:[entry,...(prev[pid]||[]).slice(0,99)]};
+    setActivities(prev=>{
+      const entries=[entry,...(prev[pid]||[]).slice(0,99)];
+      const next={...prev,[pid]:entries};
+      sbSaveRows("activities",[{id:pid,prospectId:pid,entries}]).catch(()=>{});
       return next;
     });
-    sbLogActivity(entry);
   },[userName]);
 
   const runTick=useCallback(async(enrOverride)=>{
@@ -1489,19 +1455,19 @@ export default function App(){
     if(isExisting&&activeCount>0)setPushModal({seq:norm,activeCount});else commitPublish(norm);
   },[sequences,enrollments]);
 
-  const commitPublish=useCallback((seq:any)=>{
-    setSequences(prev=>{const e=prev.find((s:any)=>s.id===seq.id);const next=e?prev.map((s:any)=>s.id===seq.id?seq:s):[...prev,seq];sbSaveSequences(next).catch(console.warn);return next;});
+  const commitPublish=useCallback(seq=>{
+    setSequences(prev=>{const e=prev.find(s=>s.id===seq.id);const next=e?prev.map(s=>s.id===seq.id?seq:s):[...prev,seq];sbSaveRows("sequences",[seq]).catch(()=>{});return next;});
     setPushModal(null);setSeqEditor(null);flash("Published v"+seq.version+"!");
   },[]);
 
-  const deleteSequence=useCallback((seqId:string)=>{
-    if(enrollments.some((e:any)=>(e.status==="active"||e.status==="paused")&&e.sequenceId===seqId)){flash("Stop active enrollments first","err");return;}
-    setSequences(prev=>{const next=prev.filter((s:any)=>s.id!==seqId);sbSaveSequences(next).catch(console.warn);return next;});flash("Deleted","warn");
+  const deleteSequence=useCallback(seqId=>{
+    if(enrollments.some(e=>(e.status==="active"||e.status==="paused")&&e.sequenceId===seqId)){flash("Stop active enrollments first","err");return;}
+    setSequences(prev=>{const next=prev.filter(s=>s.id!==seqId);sbFetch("sequences?id=eq."+seqId,{method:"DELETE",headers:{"Prefer":""}}).catch(()=>{});return next;});flash("Deleted","warn");
   },[enrollments]);
 
-  const saveCurrentView=useCallback(()=>{if(!newViewName.trim())return;const v={id:uid(),name:newViewName.trim(),filters:{stF,sqF,enrF,search}};const next=[...savedViews,v];setSavedViews(next);S.save(KEYS.sv,next);setSaveViewModal(false);setNewViewName("");setActiveView(v.id);flash("View saved");},[newViewName,stF,sqF,enrF,search,savedViews]);
-  const loadView=useCallback((id:string)=>{const v=savedViews.find((x:any)=>x.id===id);if(!v)return;setStF(v.filters.stF||"All");setSqF(v.filters.sqF||"All");setEnrF(v.filters.enrF||"All");setSearch(v.filters.search||"");setActiveView(id);},[savedViews]);
-  const deleteView=useCallback((id:string)=>{const next=savedViews.filter((v:any)=>v.id!==id);setSavedViews(next);S.save(KEYS.sv,next);if(activeView===id)setActiveView(null);},[savedViews,activeView]);
+  const saveCurrentView=useCallback(()=>{if(!newViewName.trim())return;const v={id:uid(),name:newViewName.trim(),filters:{stF,sqF,enrF,search}};const next=[...savedViews,v];setSavedViews(next);sbSaveSetting("saved_views",next).catch(()=>{});setSaveViewModal(false);setNewViewName("");setActiveView(v.id);flash("View saved");},[newViewName,stF,sqF,enrF,search,savedViews]);
+  const loadView=useCallback(id=>{const v=savedViews.find(x=>x.id===id);if(!v)return;setStF(v.filters.stF||"All");setSqF(v.filters.sqF||"All");setEnrF(v.filters.enrF||"All");setSearch(v.filters.search||"");setActiveView(id);},[savedViews]);
+  const deleteView=useCallback(id=>{const next=savedViews.filter(v=>v.id!==id);setSavedViews(next);sbSaveSetting("saved_views",next).catch(()=>{});if(activeView===id)setActiveView(null);},[savedViews,activeView]);
 
   const handleFile=async e=>{
     const file=e.target.files[0];if(!file)return;const text=await file.text();
@@ -1514,7 +1480,7 @@ export default function App(){
     const existing=new Set(prospects.map(p=>p.name.toLowerCase().trim()));
     setImportPrev(rows.map(r=>({...r,isDupe:existing.has(r.name.toLowerCase().trim())})));e.target.value="";
   };
-  const confirmImport=(rows:any[],skipDupes:boolean)=>{const toAdd=skipDupes?rows.filter((r:any)=>!r.isDupe):rows;setP((prev:any)=>[...prev,...toAdd.map((r:any)=>mkP(r))]);setImportPrev(null);flash("Imported "+toAdd.length);};
+  const confirmImport=(rows,skipDupes)=>{const toAdd=skipDupes?rows.filter(r=>!r.isDupe):rows;setP(prev=>[...prev,...toAdd.map(r=>mkP(r))]);setImportPrev(null);flash("Imported "+toAdd.length);};
 
   const refreshCrm=useCallback(async()=>{
     setCrmLoading(true);setCrmError(null);
@@ -1524,7 +1490,8 @@ export default function App(){
   },[]);
 
   useEffect(()=>{if(loaded)refreshCrm();},[loaded]);
-  const getActiveEnr=useCallback((pid:string)=>enrollments.find((e:any)=>e.prospectId===pid&&(e.status==="active"||e.status==="paused"||e.status==="failed")),[enrollments]);
+
+  const getActiveEnr=useCallback(pid=>enrollments.find(e=>e.prospectId===pid&&(e.status==="active"||e.status==="paused"||e.status==="failed")),[enrollments]);
 
   const allTasks=useMemo(()=>{
     return enrollments.filter(e=>e.status==="paused"&&e.pendingTask).map(e=>{
@@ -1661,7 +1628,7 @@ export default function App(){
                   <button className="btn bp" style={{fontSize:9}} onClick={()=>setBulkSwitchModal(true)}>Switch Sequence</button>
                   <button className="btn bOr" style={{fontSize:9}} onClick={()=>setBulkRemoveModal(true)}>Remove from Seq</button>
                   <button className="btn bPu" style={{fontSize:9}} onClick={()=>setBulkStatusModal(true)}>Change Status</button>
-                  <button className="btn bDel" style={{fontSize:9}} onClick={()=>{const ids=[...bulkSel];const updated=enrollments.map(e=>ids.includes(e.prospectId)&&(e.status==="active"||e.status==="paused"||e.status==="failed")?{...e,status:"removed",exitReason:"Deleted",finishedAt:nowISO(),pendingTask:null}:e);saveEnr(updated);setP(prev=>prev.filter(p=>!ids.includes(p.id)));setBulkSel(new Set());setBulkMode(false);flash("Deleted "+ids.length,"warn");}}>Delete</button>
+                  <button className="btn bDel" style={{fontSize:9}} onClick={()=>{const ids=[...bulkSel];const updated=enrollments.map(e=>ids.includes(e.prospectId)&&(e.status==="active"||e.status==="paused"||e.status==="failed")?{...e,status:"removed",exitReason:"Deleted",finishedAt:nowISO(),pendingTask:null}:e);saveEnr(updated);ids.forEach(id=>sbFetch("prospects?id=eq."+id,{method:"DELETE",headers:{"Prefer":""}}).catch(()=>{}));setP(prev=>prev.filter(p=>!ids.includes(p.id)));setBulkSel(new Set());setBulkMode(false);flash("Deleted "+ids.length,"warn");}}>Delete</button>
                   <button className="btn bg" style={{fontSize:9}} onClick={()=>{setBulkSel(new Set());setBulkMode(false);}}>Cancel</button>
                 </>}
               </div>
@@ -1731,7 +1698,7 @@ export default function App(){
             onDelete={async(id,name)=>{
               const toStop=enrollments.filter(e=>e.prospectId===id&&(e.status==="active"||e.status==="paused"||e.status==="failed"));
               if(toStop.length){await saveEnr(enrollments.map(e=>toStop.find(x=>x.id===e.id)?{...e,status:"removed",exitReason:"Deleted",finishedAt:nowISO(),pendingTask:null}:e));}
-              setP(prev=>prev.filter(x=>x.id!==id));setSelId(null);flash("Deleted "+name,"warn");
+              sbFetch("prospects?id=eq."+id,{method:"DELETE",headers:{"Prefer":""}}).catch(()=>{});setP(prev=>prev.filter(x=>x.id!==id));setSelId(null);flash("Deleted "+name,"warn");
             }}
             saveEnr={saveEnr} logAct={logAct} runTick={runTick}
           />
@@ -2352,7 +2319,7 @@ export default function App(){
           </div>
         </div>
       )}
-      {settingsOpen&&<SettingsModal settings={settings} onClose={()=>setSettingsOpen(false)} onSave={(wh:any)=>{setSettings(wh);S.save(KEYS.cfg,wh);setSettingsOpen(false);flash("Saved!");}}/>}
+      {settingsOpen&&<SettingsModal settings={settings} onClose={()=>setSettingsOpen(false)} onSave={wh=>{setSettings(wh);sbSaveSetting("settings",wh).catch(()=>{});setSettingsOpen(false);flash("Saved!");}}/>}
       {toast&&<div className="toast" style={{background:toast.t==="ok"?"#0a2018":toast.t==="err"?"#280a0a":"#1a1000",color:toast.t==="ok"?"#4ade80":toast.t==="err"?"#f87171":"#fbbf24",borderColor:toast.t==="ok"?"#166534":toast.t==="err"?"#7f1d1d":"#92400e"}}>{toast.m}</div>}
     </div>
   );
